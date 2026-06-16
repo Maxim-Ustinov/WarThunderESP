@@ -1,0 +1,12 @@
+# Build outputs
+bin/
+obj/
+
+# Local IDE files
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Local legacy copy kept only if Windows/IDE blocks folder rename
+GodEye/
