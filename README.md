@@ -1,4 +1,4 @@
-# WarThunderESP - War Thunder ESP (No Anti-Cheat Bypass)
+# War Thunder ESP (No Anti-Cheat Bypass)
 
 WarThunderESP is an educational offline/research prototype for War Thunder. It reads data from the `aces.exe` process and draws a transparent overlay with projected unit boxes and labels.
 
