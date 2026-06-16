@@ -8,6 +8,8 @@ This project does **not** implement any anti-cheat bypass, stealth, driver, inje
 
 Do not use this with anti-cheat enabled, in live online matches, or on an account you care about. Because this project only uses normal user-mode process memory reads and does not bypass anti-cheat, running it against a protected game session will probably get you banned.
 
+When anti-cheat is disabled in the War Thunder launcher, the official client may limit which game modes are available, for example to Arcade Battles only depending on the current client rules. This project assumes that restricted no-anti-cheat environment and does not attempt to bypass those limits.
+
 ## Features
 
 - Reads War Thunder process memory through `kernel32.dll` / `psapi.dll`.
