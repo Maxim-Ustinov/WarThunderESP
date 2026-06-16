@@ -11,15 +11,12 @@ public sealed partial class GameMemoryReader : IDisposable
     private const int GroundOffY = 0xD0C;
     private const int GroundOffZ = 0xD10;
 
-    // Fury Mk.I aircraft object found from height anchors:
-    // vtable = aces.exe+0x6358720. The area around +0x2480 contains several
-    // transform snapshots. +0x249C/+0x24A0/+0x24A4 lags behind on fast aircraft.
-    // Use the first/newest slot to reduce ESP delay/teleporting.
+    // Entity position offsets for ground units and aircraft.
     private const int AircraftOffX = 0x2480;
     private const int AircraftOffY = 0x2484;
     private const int AircraftOffZ = 0x2488;
 
-    // Visual box tuning. Ground anchor was +2.0f; lower it by ~1.25m.
+    // Dimensions used to build projected ESP boxes.
     private const float GroundEspYOffset = 0.75f;
     private const float GroundBoxBottomY = 0.10f;
     private const float GroundBoxTopY = 2.70f;
@@ -36,8 +33,7 @@ public sealed partial class GameMemoryReader : IDisposable
     private const float SelfResolveRadius = 12.0f;
     private const float SelfResolveRadiusSq = SelfResolveRadius * SelfResolveRadius;
     private const int SelfTeamCacheMs = 15000;
-    // Р’ Р°РІРёР°-СЂРµР¶РёРјРµ СЃС‚Р°СЂС‹Р№ SelfPosOffset РјРѕР¶РµС‚ РЅРµ СѓРєР°Р·С‹РІР°С‚СЊ РЅР° СЃР°РјРѕР»С‘С‚ РёРіСЂРѕРєР°.
-    // РџРѕСЌС‚РѕРјСѓ, РµСЃР»Рё ground/self-position resolve РЅРµ СЃСЂР°Р±РѕС‚Р°Р», Р±РµСЂС‘Рј Р±Р»РёР¶Р°Р№С€РёР№ Рє РєР°РјРµСЂРµ Р¶РёРІРѕР№ aircraft РєР°Рє self.
+    // Aircraft self detection uses projected center when ground self position is unavailable.
     private const float AircraftSelfMaxClipW = 420.0f;
 
     // cameraBase = ResolvePointer(aces.exe + 0x06ED7C28, [0x110, 0x298, 0xD8, 0x0])
@@ -80,14 +76,11 @@ public sealed partial class GameMemoryReader : IDisposable
     private DateTime _cachedAirGlobtmAtUtc = DateTime.MinValue;
     private const int AirGlobtmCacheMs = 95;
 
-    // Aircraft GLOBTM РёРЅРѕРіРґР° РґР°С‘С‚ РѕРґРёРЅ РїР»РѕС…РѕР№ РєР°РґСЂ: Р±РѕРєСЃ РјРѕСЂРіР°РµС‚ РёР»Рё СѓР»РµС‚Р°РµС‚.
-    // Р”РµСЂР¶РёРј РєРѕСЂРѕС‚РєРёР№ cache РїРѕСЃР»РµРґРЅРµР№ С…РѕСЂРѕС€РµР№ РїСЂРѕРµРєС†РёРё Рё СЃРіР»Р°Р¶РёРІР°РµРј С‚РѕР»СЊРєРѕ aircraft ESP.
+    // Aircraft projection cache keeps the last confirmed screen box.
     private readonly Dictionary<long, ProjectedObject> _airProjectionCache = new();
     private readonly Dictionary<long, DateTime> _airProjectionCacheAtUtc = new();
 
-    // Р•СЃР»Рё aircraft-РїСЂРѕРµРєС†РёСЏ РЅР° РѕРґРёРЅ РєР°РґСЂ СѓР»РµС‚Р°РµС‚ РІ СЃР»СѓС‡Р°Р№РЅСѓСЋ С‚РѕС‡РєСѓ, РЅРµ РїСЂРёРЅРёРјР°РµРј РµС‘ СЃСЂР°Р·Сѓ.
-    // РЎРЅР°С‡Р°Р»Р° РєР»Р°РґС‘Рј РµС‘ РІ pending. Р•СЃР»Рё СЃР»РµРґСѓСЋС‰РёР№ РєР°РґСЂ РїРѕРґС‚РІРµСЂР¶РґР°РµС‚ РїСЂРёРјРµСЂРЅРѕ С‚Сѓ Р¶Рµ РЅРѕРІСѓСЋ РїРѕР·РёС†РёСЋ вЂ” РїСЂРёРЅРёРјР°РµРј.
-    // РўР°Рє СѓР±РёСЂР°СЋС‚СЃСЏ СЂР°Р·РѕРІС‹Рµ "СЂР°РЅРґРѕРјРЅС‹Рµ Р±РѕРєСЃС‹ РІ РЅРµР±Рµ", РЅРѕ РїСЂРё СЂРµР°Р»СЊРЅРѕРј РїРѕРІРѕСЂРѕС‚Рµ РєР°РјРµСЂС‹ Р·Р°РґРµСЂР¶РєР° РјР°РєСЃРёРјСѓРј 1-2 РєР°РґСЂР°.
+    // Pending aircraft projections must be confirmed by a second similar frame.
     private readonly Dictionary<long, ProjectedObject> _airProjectionPending = new();
     private readonly Dictionary<long, DateTime> _airProjectionPendingAtUtc = new();
 
@@ -140,7 +133,7 @@ public sealed partial class GameMemoryReader : IDisposable
     {
         var proc = FindProcess();
         if (proc == null)
-            throw new Exception($"РџСЂРѕС†РµСЃСЃ {ProcessName}.exe РЅРµ РЅР°Р№РґРµРЅ");
+            throw new Exception($"Process {ProcessName}.exe was not found");
 
         _moduleBase = proc.MainModule!.BaseAddress.ToInt64();
         _vtableAddr = _moduleBase + GroundVtableOffset;
@@ -148,7 +141,7 @@ public sealed partial class GameMemoryReader : IDisposable
 
         _handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, proc.Id);
         if (_handle == IntPtr.Zero)
-            throw new Exception($"OpenProcess РЅРµ СѓРґР°Р»СЃСЏ. РљРѕРґ: {Marshal.GetLastWin32Error()}");
+            throw new Exception($"OpenProcess failed. Code: {Marshal.GetLastWin32Error()}");
     }
 }
 

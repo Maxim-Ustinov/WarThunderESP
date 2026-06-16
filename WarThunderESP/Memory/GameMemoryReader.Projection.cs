@@ -2,12 +2,10 @@
 
 public sealed partial class GameMemoryReader
 {
-    // #02 из AOB-скана: тот же результат, что STORED_GLOBTM, но читаем VIEW+PROJ
-    // и сами считаем VP = PROJ * VIEW. Это менее чувствительно к pass-specific globtm.
+    // VIEW and PROJ are multiplied into a world-to-clip matrix.
     private const long DebugViewOffset = 0x6EE2770;
     private const long DebugProjOffset = 0x6EE27B0;
-    // Stored Dagor globtm from FrameStateTM: direct world->clip matrix.
-    // In air battles VIEW+PROJ can be a stale/wrong render pass, so aircraft W2S tries this first.
+    // GLOBTM is a direct world-to-clip matrix used for aircraft projection.
     private const long DebugGlobtmOffset = 0x71827B0;
 
     public long ViewOffset => DebugViewOffset;
@@ -18,8 +16,7 @@ public sealed partial class GameMemoryReader
         view = new float[16];
         proj = new float[16];
 
-        // VIEW и PROJ лежат подряд: VIEW at +0x40, PROJ at +0x80.
-        // Читаем 0x80 одним snapshot, чтобы не получить VIEW от одного кадра, а PROJ от другого.
+        // Read VIEW and PROJ in one snapshot so both matrices come from the same frame.
         byte[] buffer = new byte[0x80];
         long address = _moduleBase + DebugViewOffset;
 
@@ -43,8 +40,7 @@ public sealed partial class GameMemoryReader
 
     private static float[] MulMat44ColumnMajor(float[] a, float[] b)
     {
-        // Dagor mat44f: column-major, column-vector convention.
-        // result = a * b.
+        // Multiply Dagor column-major matrices.
         var r = new float[16];
 
         for (int col = 0; col < 4; col++)
@@ -100,10 +96,7 @@ public sealed partial class GameMemoryReader
     {
         globtm = new float[16];
 
-        // NoLag + AntiFlicker:
-        // берём свежую GLOBTM каждый кадр, но не принимаем snapshot, если он пойман
-        // прямо во время записи render-pass. Два быстрых чтения почти не добавляют лаг,
-        // зато убирают одиночные битые кадры, из-за которых aircraft boxes моргают.
+        // Accept only stable GLOBTM reads; otherwise use the short-lived cache.
         if (TryReadGlobtmRaw(out float[] a) && TryReadGlobtmRaw(out float[] b))
         {
             if (MatricesClose(a, b, 0.12f))
@@ -115,8 +108,6 @@ public sealed partial class GameMemoryReader
             }
         }
 
-        // Если попали в момент обновления матрицы, один-два кадра держим последнюю хорошую.
-        // Cache короткий, чтобы при повороте камеры бокс не начинал заметно догонять модель.
         if (_cachedAirGlobtm != null)
         {
             double ageMs = (DateTime.UtcNow - _cachedAirGlobtmAtUtc).TotalMilliseconds;
@@ -187,7 +178,7 @@ public sealed partial class GameMemoryReader
         if (clipW <= 0.001f || !IsFinite(clipW))
             return false;
 
-        // Reverse-Z near-plane reject. Если будет пропадание на близких объектах — можно ослабить.
+        // Reject points behind the reverse-Z near plane.
         if (clipZ >= clipW)
             return false;
 
@@ -258,13 +249,13 @@ public sealed partial class GameMemoryReader
         if (!IsFinite(boxWidth) || !IsFinite(boxHeight) || boxWidth <= 1.0f || boxHeight <= 1.0f)
             return false;
 
-        // Защита от гигантских прямоугольников, когда объект совсем рядом/частично за камерой.
+        // Reject oversized boxes produced by near-camera partial projections.
         float maxW = screenW * 0.85f;
         float maxH = screenH * 0.85f;
         if (boxWidth > maxW || boxHeight > maxH)
             return false;
 
-        // Минимальный размер, чтобы дальние цели не превращались в пиксель.
+        // Keep distant targets visible with a minimum box size.
         float minW = isAircraft ? 16.0f : 18.0f;
         float minH = isAircraft ? 10.0f : 14.0f;
         if (boxWidth < minW)
@@ -317,9 +308,6 @@ public sealed partial class GameMemoryReader
 
                 if (jumpSq > outlierSq)
                 {
-                    // ВАЖНО: bad-frame больше НИКОГДА не принимается по timeout.
-                    // Иначе одиночный мусорный GLOBTM/позиционный slot успевает записаться в cache,
-                    // и появляется "рандомный" бокс с правильным названием самолёта где-то в небе.
                     if (_airProjectionPending.TryGetValue(raw.Address, out ProjectedObject pending) &&
                         _airProjectionPendingAtUtc.TryGetValue(raw.Address, out DateTime pendingAt))
                     {
@@ -329,7 +317,7 @@ public sealed partial class GameMemoryReader
 
                         if (pendingAgeMs >= 0 && pendingAgeMs <= AirProjectionPendingMaxMs && pendingJumpSq <= confirmSq)
                         {
-                            // Только два похожих подряд новых кадра считаем реальным смещением.
+                            // Accept a projection jump only after a matching confirmation frame.
                             _airProjectionPending.Remove(raw.Address);
                             _airProjectionPendingAtUtc.Remove(raw.Address);
                             _airProjectionCache[raw.Address] = raw;
@@ -348,8 +336,7 @@ public sealed partial class GameMemoryReader
         }
         else
         {
-            // Первый кадр для aircraft тоже не рисуем сразу.
-            // Нужно второе похожее чтение, иначе случайный первый bad-frame появится как отдельный бокс в небе.
+            // New aircraft projections must be confirmed before they are drawn.
             if (_airProjectionPending.TryGetValue(raw.Address, out ProjectedObject pending) &&
                 _airProjectionPendingAtUtc.TryGetValue(raw.Address, out DateTime pendingAt))
             {
@@ -483,20 +470,16 @@ out float distance)
             return result;
 
         float[] defaultVp = hasViewProj ? viewProj : globtm;
-        // Для авиации используем только стабильный GLOBTM. VIEW+PROJ в лётном режиме даёт другой/stale pass.
+        // Aircraft uses GLOBTM; ground units can use VIEW+PROJ with fallback.
 
         var objects = GetObjectAddresses();
         var self = GetSelfPosition();
         bool selfOk = IsFinite(self.x) && IsFinite(self.z);
 
-        // Собственную команду нельзя считать "по умолчанию".
-        // В TAB/после смерти/при выборе нового танка self-object может временно не находиться.
-        // Старый код в этот момент отключал team-фильтр, поэтому на 5-15 секунд появлялись союзники.
+        // Do not draw anything until the local team is resolved.
         long selfObjectAddress = selfOk ? FindSelfObjectAddress(objects, self.x, self.z) : 0;
 
-        // В танковом бою self ищется через старый SelfPosOffset.
-        // В лётном бою этот offset часто не обновляется, поэтому selfTeam не находился
-        // и ESP возвращал пустой список. Fallback: ближайший к камере aircraft = свой самолёт.
+        // Ground self is resolved by position; aircraft self falls back to screen-center matching.
         if (selfObjectAddress == 0 && hasGlobtm)
         {
             selfObjectAddress = FindSelfAircraftByView(objects, globtm, screenW, screenH);
@@ -518,21 +501,19 @@ out float distance)
             if (!IsValidWorldPosition(pos))
                 continue;
 
-            // Убираем только собственную машину по адресу, а не все объекты в радиусе 35м.
+            // Exclude only the local vehicle address.
             if (selfObjectAddress != 0 && objectAddress == selfObjectAddress)
                 continue;
 
-            // Убираем мусор/props: у небоевых объектов FE8 обычно = -1.
-            // FE8 читаем как short, потому что в debug-подписи он был I16.
+            // Skip non-combat objects.
             if (!IsCombatUnit(objectAddress))
                 continue;
 
-            // Убираем трупы. По live/dead diff чистый кандидат: object+0x1860 byte/int 0 -> 1 после смерти.
+            // Skip destroyed units.
             if (!IsAlive(objectAddress))
                 continue;
 
-            // FE0 используем только когда selfTeam уже разрешён или взят из свежего cache.
-            // Если selfTeam неизвестен — выше возвращаем пустой список, а не рисуем союзников.
+            // Skip same-team entities.
             if (!IsEnemyOfSelfTeam(objectAddress, selfTeam))
                 continue;
 
@@ -577,8 +558,7 @@ out float distance)
             {
                 bool boxOk = TryBuildProjectedBox(pos, isAircraft, usedVp, screenW, screenH, out float left, out float top, out float right, out float bottom);
 
-                // В авиации иногда один corner-box строится по соседнему render pass и улетает от anchor-точки.
-                // Если центр прямоугольника далеко от projected center, отбрасываем 3D-box и рисуем стабильный 2D fallback.
+                // Reject aircraft 3D boxes whose center drifts away from the projected anchor.
                 if (boxOk && isAircraft)
                 {
                     float bw = Math.Max(1.0f, right - left);
@@ -593,7 +573,7 @@ out float distance)
 
                 if (!boxOk)
                 {
-                    // Fallback на старую дистанционную формулу, если 3D box частично за камерой.
+                    // Use a distance-scaled 2D box when the 3D box cannot be projected.
                     float h = isAircraft
                         ? Clamp(2600.0f / Math.Max(Math.Abs(clipW), 1.0f), 18.0f, 70.0f)
                         : Clamp(4200.0f / Math.Max(Math.Abs(clipW), 1.0f), 24.0f, 120.0f);

@@ -49,10 +49,7 @@ public sealed partial class GameMemoryReader
         return dx * dx + dz * dz <= SelfExcludeRadiusSq;
     }
 
-
-    // Unit descriptor/name path from CE Lua:
-    // obj+0x0FF0 -> descriptor; descriptor+0x20 -> display name, e.g. "M3 Stuart".
-    // Fallbacks keep ESP usable if +0x20 is missing for another vehicle type.
+    // Reads unit names from descriptor string slots.
     private const int UnitDescriptorOffset = 0x0FF0;
     private static readonly int[] UnitNameOffsets = { 0x20, 0x08, 0x10, 0x40, 0x348 };
 
@@ -112,8 +109,7 @@ public sealed partial class GameMemoryReader
         if (value.Length < 3 || value.Length > 96)
             return false;
 
-        // Best label: human-readable name from descriptor+0x20, e.g. "M3 Stuart".
-        // Fallbacks can be internal names/paths like "us_m3_stuart" or "tankModels/us_m3_stuart".
+        // Accept display names and known internal resource paths.
         if (value.IndexOf("tankModels/", StringComparison.OrdinalIgnoreCase) >= 0)
             return true;
 
@@ -140,9 +136,7 @@ public sealed partial class GameMemoryReader
         return true;
     }
 
-    // FE0: side/relation marker. Читаем byte.
-    // На валидной выборке: allies=2, enemies=1.
-    // Не используем фиксированные 1/2, сравниваем с FE0 собственной машины.
+    // Object metadata offsets used by entity filters.
     private const int TeamOffset = 0xFE0;
     private const int UnitIdOffset = 0xFE8;
     private const int DeadFlagOffset = 0x1860;
@@ -161,8 +155,7 @@ public sealed partial class GameMemoryReader
 
     private bool IsAlive(long objectAddress)
     {
-        // Кандидат из live/dead diff: после смерти object+0x1860 меняется 0 -> 1.
-        // Читаем именно byte, чтобы не цеплять соседние поля.
+        // Dead flag is a byte marker; zero means alive.
         byte deadFlag = ReadByte(objectAddress + DeadFlagOffset);
 
         return deadFlag == 0;
@@ -226,8 +219,7 @@ public sealed partial class GameMemoryReader
             if (centerDistSq > maxCenterDistSq)
                 continue;
 
-            // Свой самолёт в третьем лице обычно самый близкий к камере и сидит около центра.
-            // Не выбираем просто минимальный clipW по всему экрану, иначе иногда selfTeam берётся от врага.
+            // Resolve the local aircraft by preferring projected objects near screen center.
             float score = centerDistSq + clipW * 1.75f;
             if (score < bestScore)
             {
@@ -287,7 +279,6 @@ public sealed partial class GameMemoryReader
 
     public int ReadTeam(long objectAddress)
     {
-        // TeamOffset сейчас указывает на FE0, это byte-поле.
         return ReadByte(objectAddress + TeamOffset);
     }
 

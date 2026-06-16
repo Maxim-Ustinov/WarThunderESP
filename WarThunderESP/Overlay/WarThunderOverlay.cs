@@ -113,9 +113,6 @@ public sealed class WarThunderOverlay : IDisposable
         float centerX = width / 2f;
         float centerY = height / 2f;
 
-        // Красный крестик по центру убран.
-
-        // Для globtm FOV/zoom уже внутри матрицы. scaleX/scaleY больше не используются.
         var projected = _reader.GetProjectedObjects(width, height, width / 2.0f, height / 2.0f);
 
         float minX = float.MaxValue;

@@ -84,7 +84,7 @@ public sealed partial class GameMemoryReader
             }
             catch
             {
-                // Не убиваем overlay из-за временной ошибки чтения памяти.
+                // Ignore transient memory-read failures during scanning.
             }
 
             Thread.Sleep(ScanPauseMs);
@@ -176,6 +176,7 @@ public sealed partial class GameMemoryReader
         return address > 0x10000 && address < 0x00007FFFFFFFFFFF;
     }
 
+    // Scans readable process regions for objects whose first pointer matches a target vtable.
     private List<long> ScanForVtables(params long[] vtableAddrs)
     {
         var found = new List<long>();
