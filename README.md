@@ -1,8 +1,14 @@
-# War Thunder ESP (No Anti-Cheat Bypass)
+# WarThunderESP 
 
-WarThunderESP is an educational offline/research prototype for War Thunder. It reads data from the `aces.exe` process and draws a transparent overlay with projected unit boxes and labels.
+WarThunderESP is an educational offline research overlay prototype for War Thunder, written in C#/.NET. It reads data from the local aces.exe process and draws a transparent overlay with projected unit boxes and labels.
 
-This project does **not** implement any anti-cheat bypass, stealth, driver, injection, hook, memory patching, or protection-disabling technique. It uses standard Windows API functions such as `OpenProcess`, `ReadProcessMemory`, `VirtualQueryEx`, `GetMappedFileNameW`, `GetSystemMetrics`, and `GetAsyncKeyState`.
+This project is intended for offline/no-anti-cheat research, code-architecture study, and game-memory analysis experiments.
+
+## No Anti-Cheat Bypass
+
+WarThunderESP does not implement any anti-cheat bypass, stealth mechanism, driver, injection, hook, memory patching, or protection-disabling technique.
+
+It uses standard Windows API functions such as OpenProcess, ReadProcessMemory, VirtualQueryEx, GetMappedFileNameW, GetSystemMetrics, and GetAsyncKeyState.
 
 ## Caution
 
@@ -60,3 +66,7 @@ NuGet.Config          Project-local NuGet source configuration.
 ## Notes
 
 Offsets and vtable addresses are game-version-specific. If War Thunder updates, the ESP may stop working until the offsets are refreshed.
+
+## Disclaimer
+
+This repository is provided for educational and research purposes only. The author is not responsible for misuse of this code or violations of third-party terms of service.
